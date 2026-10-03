@@ -846,6 +846,7 @@ button { font: inherit; color: inherit; }
   gap: var(--s-3);
   margin: var(--s-2) var(--s-1) var(--s-5);
 }
+.log-date-field { width: min(220px, 100%); margin: var(--s-3) 0 0; }
 
 /* Author credit under the app title. Tertiary ink and micro size so it
    reads as a signature rather than a subheading. */
@@ -1787,7 +1788,7 @@ button { font: inherit; color: inherit; }
       ensureDay(key).entries = [];
       commit();
     }
-    
+
     /* ------------------------------------------------------- weight & steps -- */
     
     function setWeight(value, key = dayKey()) {
@@ -3267,16 +3268,40 @@ button { font: inherit; color: inherit; }
       // storage key. A hand-typed `#/log?date=2026-9-5` would otherwise create
       // `days['2026-9-5']`, accept a full day of food, and then have the whole
       // day silently discarded by storage.normalise() on the next launch.
-      const key = DAY_KEY.test(params.date || '') ? params.date : dayKey();
+      const requestedKey = params.date || '';
+      const requestedDate = DAY_KEY.test(requestedKey) ? fromKey(requestedKey) : null;
+      const key = requestedDate && dayKey(requestedDate) === requestedKey && requestedKey <= dayKey()
+        ? requestedKey
+        : dayKey();
       const totals = nutrition.totalsFor(key);
       const goals = store.goals();
       const entries = store.day(key).entries;
+      const dateInput = el('input.input', {
+        id: 'log-date',
+        type: 'date',
+        value: key,
+        max: dayKey(),
+        onchange: () => {
+          const selected = dateInput.value;
+          const parsed = DAY_KEY.test(selected) ? fromKey(selected) : null;
+          if (!parsed || dayKey(parsed) !== selected || selected > dayKey()) {
+            dateInput.value = key;
+            toast('Choose today or an earlier date');
+            return;
+          }
+          go('log', { date: selected });
+        },
+      });
 
       return el('div', {},
         el('header.screen-head', {},
           el('div', {},
             el('div.cap', {}, friendlyDate(key)),
             el('h1.screen-title', {}, 'Log food'),
+            el('div.field.log-date-field', {},
+              el('label.field__label', { for: 'log-date' }, 'Date'),
+              dateInput,
+            ),
           ),
           entries.length
             ? el('button.btn.btn--sm', { type: 'button', onclick: () => openSaveTemplate(key) }, 'Save as meal')
@@ -3511,6 +3536,11 @@ button { font: inherit; color: inherit; }
             el('div.cap', {}, keys.length ? `${keys.length} days recorded` : 'Nothing yet'),
             el('h1.screen-title', {}, 'History'),
           ),
+          el('button.btn.btn--sm', {
+            type: 'button',
+            style: { minHeight: '48px' },
+            onclick: openFoodExport,
+          }, 'Export foods'),
         ),
 
         keys.length ? weekSummary() : null,
@@ -3523,6 +3553,219 @@ button { font: inherit; color: inherit; }
                 'Log a meal and it shows up here the same day.'),
         ),
       );
+    }
+
+    function openFoodExport() {
+      const today = dayKey();
+      const loggedDates = store.loggedDayKeys()
+        .filter((key) => store.day(key).entries.length > 0 && key <= today)
+        .sort();
+      let selectedMode = 'dates';
+      let exporting = false;
+
+      const selectedDateInput = (key) => el('div.row', { style: { gap: 'var(--s-2)' } },
+        el('input.input', {
+          type: 'date',
+          value: key,
+          max: today,
+          required: true,
+          'aria-label': 'Food export date',
+        }),
+        el('button.btn', {
+          type: 'button',
+          'aria-label': 'Remove date',
+          style: { minWidth: '48px', paddingInline: 'var(--s-3)' },
+          onclick: (event) => {
+            event.currentTarget.closest('.row').remove();
+            if (!dateList.querySelector('input[type="date"]')) {
+              dateList.append(selectedDateInput(today));
+            }
+          },
+        }, '×'),
+      );
+      const dateList = el('div.stack', { style: { gap: 'var(--s-2)' } },
+        selectedDateInput(loggedDates.at(-1) || today));
+      const startInput = el('input.input', {
+        id: 'food-export-start',
+        type: 'date',
+        value: loggedDates.length ? loggedDates[0] : addDays(today, -6),
+        max: today,
+        required: true,
+        'aria-describedby': 'food-export-status',
+      });
+      const endInput = el('input.input', {
+        id: 'food-export-end',
+        type: 'date',
+        value: today,
+        max: today,
+        required: true,
+        'aria-describedby': 'food-export-status',
+      });
+      const status = el('p.cap', {
+        id: 'food-export-status',
+        role: 'status',
+        'aria-live': 'polite',
+        style: { minHeight: '1.4em', marginTop: 'var(--s-3)' },
+      });
+      const datesPanel = el('div', {},
+        dateList,
+        el('button.btn', {
+          type: 'button',
+          style: { width: '100%', marginTop: 'var(--s-2)' },
+          onclick: () => dateList.append(selectedDateInput(today)),
+        }, 'Add another date'),
+      );
+      const rangePanel = el('div', { class: 'hidden' },
+        el('div.field', {},
+          el('label.field__label', { for: 'food-export-start' }, 'From date'),
+          startInput,
+        ),
+        el('div.field', {},
+          el('label.field__label', { for: 'food-export-end' }, 'Through date'),
+          endInput,
+        ),
+      );
+
+      const datesMode = el('button.segmented__opt', {
+        type: 'button',
+        'aria-pressed': 'true',
+        style: { minHeight: '44px' },
+        onclick: () => setMode('dates'),
+      }, 'Specific dates');
+      const rangeMode = el('button.segmented__opt', {
+        type: 'button',
+        'aria-pressed': 'false',
+        style: { minHeight: '44px' },
+        onclick: () => setMode('range'),
+      }, 'Date range');
+
+      function setMode(mode) {
+        selectedMode = mode;
+        datesPanel.classList.toggle('hidden', mode !== 'dates');
+        rangePanel.classList.toggle('hidden', mode !== 'range');
+        datesMode.setAttribute('aria-pressed', String(mode === 'dates'));
+        rangeMode.setAttribute('aria-pressed', String(mode === 'range'));
+        status.textContent = '';
+        status.setAttribute('role', 'status');
+      }
+
+      const exportRange = async () => {
+        if (exporting) return;
+        const validDate = (key) => {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
+          return dayKey(fromKey(key)) === key && key <= today;
+        };
+        let selectedDates;
+        let filenameDates;
+        if (selectedMode === 'dates') {
+          selectedDates = [...dateList.querySelectorAll('input[type="date"]')].map((input) => input.value);
+          if (!selectedDates.length || selectedDates.some((key) => !validDate(key))) {
+            status.setAttribute('role', 'alert');
+            status.textContent = 'Choose valid dates up to today.';
+            return;
+          }
+          if (new Set(selectedDates).size !== selectedDates.length) {
+            status.setAttribute('role', 'alert');
+            status.textContent = 'Each date can only be selected once.';
+            return;
+          }
+          selectedDates.sort();
+          filenameDates = selectedDates.length === 1
+            ? selectedDates[0]
+            : 'selected-dates';
+        } else {
+          const start = startInput.value;
+          const end = endInput.value;
+          if (!validDate(start) || !validDate(end)) {
+            status.setAttribute('role', 'alert');
+            status.textContent = 'Choose valid dates up to today.';
+            return;
+          }
+          if (start > end) {
+            status.setAttribute('role', 'alert');
+            status.textContent = 'The start date must be on or before the end date.';
+            return;
+          }
+          selectedDates = store.loggedDayKeys().filter((key) => key >= start && key <= end);
+          filenameDates = `${start}-to-${end}`;
+        }
+
+        const rows = selectedDates
+          .sort()
+          .flatMap((key) => store.day(key).entries.map((entry) => {
+            const food = store.foodById(entry.foodId);
+            const macros = nutrition.entryTotals(entry);
+            return [key, food?.name ?? 'Deleted food', food?.serving ?? '', formatQty(entry.qty),
+              macros.calories, macros.protein, macros.carbs, macros.fat];
+          }));
+
+        if (!rows.length) {
+          status.textContent = 'No food entries were found in that date range.';
+          return;
+        }
+
+        const csvCell = (value) => {
+          let text = String(value ?? '');
+          if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
+          return `"${text.replaceAll('"', '""')}"`;
+        };
+        const csv = [
+          ['Date', 'Food', 'Serving', 'Quantity', 'Calories (kcal)', 'Protein (g)', 'Carbs (g)', 'Fat (g)'],
+          ...rows,
+        ].map((row) => row.map(csvCell).join(',')).join('\r\n');
+        const name = `macrotrack-foods-${filenameDates}.csv`;
+        const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
+        exporting = true;
+
+        try {
+          const file = new File([blob], name, { type: 'text/csv' });
+          if (navigator.canShare?.({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Food log export' });
+            closeSheet();
+            toast(`Exported ${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'}`);
+            return;
+          }
+        } catch (err) {
+          if (err?.name === 'AbortError') {
+            exporting = false;
+            status.textContent = 'Export cancelled.';
+            return;
+          }
+          console.error('[history] CSV share failed', err);
+        }
+
+        try {
+          const url = URL.createObjectURL(blob);
+          const link = el('a', { href: url, download: name, style: { display: 'none' } });
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 10_000);
+          closeSheet();
+          toast(`Exported ${rows.length} food ${rows.length === 1 ? 'entry' : 'entries'}`);
+        } catch (err) {
+          console.error('[history] CSV export failed', err);
+          exporting = false;
+          status.setAttribute('role', 'alert');
+          status.textContent = 'Could not export this food range. Try again.';
+        }
+      };
+
+      sheet({
+        title: 'Export foods',
+        body: el('div', {},
+          el('p.cap', { style: { marginBottom: 'var(--s-4)' } },
+            'Export one row per food entry, including serving quantity and macros.'),
+          el('div.segmented', { role: 'group', 'aria-label': 'Date selection mode', style: { marginBottom: 'var(--s-4)' } },
+            datesMode,
+            rangeMode,
+          ),
+          datesPanel,
+          rangePanel,
+          status,
+          sheetActions('Export CSV', exportRange),
+        ),
+      });
     }
 
     /* ------------------------------------------------------------ week card --- */
@@ -3613,11 +3856,11 @@ button { font: inherit; color: inherit; }
             })
           : el('div.cap', {}, 'No food logged this day.'),
 
-        el('button.btn.btn--sm.btn--quiet', {
+        el('button.btn.btn--quiet', {
           type: 'button',
-          style: { marginTop: 'var(--s-3)', paddingLeft: 0 },
+          style: { marginTop: 'var(--s-3)', paddingLeft: 0, minHeight: '48px' },
           onclick: (e) => { e.stopPropagation(); go('log', { date: key }); },
-        }, `Edit ${friendlyDate(key).toLowerCase()} →`),
+        }, `Log foods for ${friendlyDate(key).toLowerCase()} →`),
       );
     }
 

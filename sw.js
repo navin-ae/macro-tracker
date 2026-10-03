@@ -10,7 +10,7 @@
  * caches, which is what stops users being pinned to a stale build.
  */
 
-const CACHE_VERSION = 'macrotrack-single-v3';
+const CACHE_VERSION = 'macrotrack-single-v5';
 const SHELL = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
