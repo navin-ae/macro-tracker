@@ -3070,7 +3070,7 @@ button { font: inherit; color: inherit; }
      * dashboard.js — today at a glance.
      *
      * Layout intent: exactly one bold element. The calorie ring is large and
-     * carries the headline number (calories left); the three macro rings sit
+     * carries the headline number (calories eaten); the three macro rings sit
      * quiet beneath it in the same card, and the stat tiles and coach notes are
      * deliberately plain. If everything shouted, nothing would.
      */
@@ -3080,8 +3080,6 @@ button { font: inherit; color: inherit; }
       const today = dayKey();
       const totals = nutrition.totalsFor(today);
       const goals = store.goals();
-      const left = nutrition.remaining(totals.calories, goals.calories);
-      const over = totals.calories > goals.calories;
     
       return el('div', {},
         el('header.screen-head', {},
@@ -3098,7 +3096,7 @@ button { font: inherit; color: inherit; }
           }, '+ Log food'),
         ),
     
-        heroCard(totals, goals, left, over),
+        heroCard(totals, goals),
         statRow(today),
         coachCard(today),
       );
@@ -3106,7 +3104,7 @@ button { font: inherit; color: inherit; }
     
     /* ------------------------------------------------------------------ hero -- */
     
-    function heroCard(totals, goals, left, over) {
+    function heroCard(totals, goals) {
       return el('section.card.hero', { 'aria-label': 'Today\'s macros' },
         ring({
           value: totals.calories,
@@ -3116,13 +3114,13 @@ button { font: inherit; color: inherit; }
           stroke: 16,
           label: 'Calories',
           center: el('div', { style: { textAlign: 'center' } },
-            el('div.hero__center-value.num', {}, over ? int(totals.calories - goals.calories) : int(left)),
-            el('div.hero__center-unit', {}, over ? 'kcal over' : 'kcal left'),
+            el('div.hero__center-value.num', {}, int(totals.calories)),
+            el('div.hero__center-unit', {}, 'kcal eaten'),
           ),
         }),
     
         el('div.hero__eaten', {},
-          `${int(totals.calories)} of ${int(goals.calories)} kcal eaten`),
+          `of ${int(goals.calories)} kcal goal`),
     
         el('div.hero__macros', {},
           macroRing({ value: totals.protein, goal: goals.protein, color: 'var(--c-protein)', label: 'Protein' }),
