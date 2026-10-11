@@ -3862,18 +3862,29 @@ button { font: inherit; color: inherit; }
             endInput,
           ),
         ),
-        el('div.row', { style: { gap: 'var(--s-2)', marginTop: 'var(--s-3)' } },
-          el('button.btn.btn--primary.btn--sm', {
+        el('div', {
+          style: {
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+            gap: 'var(--s-2)',
+            marginTop: 'var(--s-3)',
+          },
+        },
+          el('button.btn.btn--primary', {
             type: 'button',
+            style: { width: '100%', paddingInline: 'var(--s-2)' },
             onclick: () => applyRange(startInput.value, endInput.value, status),
           }, 'Apply range'),
-          el('button.btn.btn--quiet.btn--sm', {
+          el('button.btn', {
             type: 'button',
+            'aria-label': 'Reset date range to all logged days',
+            title: 'Show averages for all logged days',
+            style: { width: '100%', paddingInline: 'var(--s-2)' },
             onclick: () => {
               selectedRange = null;
               rerender();
             },
-          }, 'Reset to all days'),
+          }, 'Reset range'),
         ),
         status,
         el('div.cap', { style: { marginBottom: 'var(--s-3)' } },
