@@ -3260,6 +3260,7 @@ button { font: inherit; color: inherit; }
 
     /** Day keys are the storage index, so only an exact YYYY-MM-DD is accepted. */
     const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+    let foodSearch = '';
 
     function render(params = {}) {
       // Defaults to today, but History can deep-link here to fix up a past day.
@@ -3358,34 +3359,65 @@ button { font: inherit; color: inherit; }
     function foodGrid(key) {
       const pinned = store.foods().filter((f) => f.pinned !== false);
       const counts = new Map(store.day(key).entries.map((e) => [e.foodId, e.qty]));
+      const search = el('input.input', {
+        type: 'search',
+        value: foodSearch,
+        placeholder: 'Search foods',
+        'aria-label': 'Search all foods by name',
+        autocomplete: 'off',
+        oninput: (event) => {
+          foodSearch = event.currentTarget.value;
+          updateResults();
+        },
+      });
+      const resultsLabel = el('div.cap', { 'aria-live': 'polite', style: { margin: 'var(--s-2) 0' } });
+      const results = el('div');
 
-      if (!pinned.length) {
-        return el('div.card', {},
+      function updateResults() {
+        const query = foodSearch.trim().toLocaleLowerCase();
+        const foods = query
+          ? store.foods().filter((food) => food.name.toLocaleLowerCase().includes(query))
+          : pinned;
+
+        results.replaceChildren();
+        if (foods.length) {
+          resultsLabel.textContent = query
+            ? `${foods.length} matching ${foods.length === 1 ? 'food' : 'foods'}`
+            : `${pinned.length} pinned ${pinned.length === 1 ? 'food' : 'foods'} · search to find any food`;
+          results.append(el('div.food-grid', {}, foods.map((food) => {
+            const qty = counts.get(food.id) || 0;
+            return el('button.food-btn', {
+              type: 'button',
+              'aria-label': `Add one ${food.name}, ${Math.round(food.calories)} calories`,
+              onclick: () => {
+                tapFeedback();
+                const before = snapshot(key);
+                store.addServing(food.id, 1, key);
+                toast(`${food.emoji} ${food.name} added`, { onUndo: () => restore(key, before) });
+              },
+            },
+              el('span.food-btn__emoji', {}, food.emoji),
+              el('span.food-btn__name', {}, food.name),
+              el('span.food-btn__macro', {},
+                `${Math.round(food.calories)} kcal · ${grams(food.protein)}g P`),
+              qty > 0 ? el('span.food-btn__count.num', {}, formatQty(qty)) : null,
+            );
+          })));
+          return;
+        }
+
+        resultsLabel.textContent = '';
+        results.append(el('div.card', {},
           el('div.empty', {},
-            el('strong', {}, 'No foods pinned'),
-            'Pin foods in Settings to put them on this grid.'));
+            el('strong', {}, query ? 'No matching foods' : 'No foods pinned'),
+            query ? 'Try another search term.' : 'Search for any food, or pin foods in Settings to add them here.')));
       }
 
-      return el('div.food-grid', {},
-        pinned.map((food) => {
-          const qty = counts.get(food.id) || 0;
-          return el('button.food-btn', {
-            type: 'button',
-            'aria-label': `Add one ${food.name}, ${Math.round(food.calories)} calories`,
-            onclick: () => {
-              tapFeedback();
-              const before = snapshot(key);
-              store.addServing(food.id, 1, key);
-              toast(`${food.emoji} ${food.name} added`, { onUndo: () => restore(key, before) });
-            },
-          },
-            el('span.food-btn__emoji', {}, food.emoji),
-            el('span.food-btn__name', {}, food.name),
-            el('span.food-btn__macro', {},
-              `${Math.round(food.calories)} kcal · ${grams(food.protein)}g P`),
-            qty > 0 ? el('span.food-btn__count.num', {}, formatQty(qty)) : null,
-          );
-        }),
+      updateResults();
+      return el('div', {},
+        search,
+        resultsLabel,
+        results,
       );
     }
 
@@ -3526,9 +3558,11 @@ button { font: inherit; color: inherit; }
 
     /** Which row is expanded. Module-level so it survives a state re-render. */
     let expandedKey = null;
+    let selectedRange = null;
 
     function render() {
       const keys = store.loggedDayKeys();
+      const foodKeys = keys.filter((key) => store.day(key).entries.length > 0);
 
       return el('div', {},
         el('header.screen-head', {},
@@ -3543,7 +3577,7 @@ button { font: inherit; color: inherit; }
           }, 'Export foods'),
         ),
 
-        keys.length ? weekSummary() : null,
+        foodKeys.length ? averageSummary(foodKeys) : null,
 
         el('section.card.card--flush', {},
           keys.length
@@ -3768,15 +3802,43 @@ button { font: inherit; color: inherit; }
       });
     }
 
-    /* ------------------------------------------------------------ week card --- */
+    /* --------------------------------------------------------- average card --- */
 
-    function weekSummary() {
-      const week = lastNDays(7);
-      const logged = week.filter((k) => store.day(k).entries.length > 0);
-      if (!logged.length) return null;
+    function averageSummary(foodKeys) {
+      const oldest = foodKeys[foodKeys.length - 1];
+      const newest = foodKeys[0];
+      const startInput = el('input.input', {
+        id: 'history-average-start',
+        type: 'date',
+        value: selectedRange?.from ?? oldest,
+        max: dayKey(),
+        required: true,
+        'aria-describedby': 'history-average-status',
+      });
+      const endInput = el('input.input', {
+        id: 'history-average-end',
+        type: 'date',
+        value: selectedRange?.to ?? newest,
+        max: dayKey(),
+        required: true,
+        'aria-describedby': 'history-average-status',
+      });
+      const status = el('p.cap', {
+        id: 'history-average-status',
+        role: 'status',
+        'aria-live': 'polite',
+        style: { minHeight: '1.4em', marginTop: 'var(--s-2)' },
+      });
+
+      const start = selectedRange?.from ?? oldest;
+      const end = selectedRange?.to ?? newest;
+      const logged = foodKeys.filter((key) => key >= start && key <= end);
+      const displayDate = (key) => fromKey(key).toLocaleDateString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
+      });
 
       const goals = store.goals();
-      const avg = (macro) => nutrition.averageMacro(week, macro);
+      const avg = (macro) => nutrition.averageMacro(logged, macro);
 
       const stat = (label, value, unit, color) =>
         el('div', {},
@@ -3788,18 +3850,64 @@ button { font: inherit; color: inherit; }
 
       return el('section.card', {},
         el('div.card-head', {},
-          el('h2.card-title', {}, 'Last 7 days'),
-          el('span.cap', {}, `${logged.length} logged`),
+          el('h2.card-title', {}, 'Average per day'),
         ),
+        el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'var(--s-3)' } },
+          el('div.field', { style: { marginBottom: 0 } },
+            el('label.field__label', { for: 'history-average-start' }, 'From date'),
+            startInput,
+          ),
+          el('div.field', { style: { marginBottom: 0 } },
+            el('label.field__label', { for: 'history-average-end' }, 'Through date'),
+            endInput,
+          ),
+        ),
+        el('div.row', { style: { gap: 'var(--s-2)', marginTop: 'var(--s-3)' } },
+          el('button.btn.btn--primary.btn--sm', {
+            type: 'button',
+            onclick: () => applyRange(startInput.value, endInput.value, status),
+          }, 'Apply range'),
+          el('button.btn.btn--quiet.btn--sm', {
+            type: 'button',
+            onclick: () => {
+              selectedRange = null;
+              rerender();
+            },
+          }, 'Reset to all days'),
+        ),
+        status,
+        el('div.cap', { style: { marginBottom: 'var(--s-3)' } },
+          `Showing daily averages from ${displayDate(start)} to ${displayDate(end)} · based on ${logged.length} logged ${logged.length === 1 ? 'day' : 'days'}`),
         el('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--s-3)' } },
           stat('Cal / day', int(avg('calories')), '', 'var(--c-calories)'),
           stat('Protein', grams(avg('protein')), 'g', 'var(--c-protein)'),
           stat('Carbs', grams(avg('carbs')), 'g', 'var(--c-carbs)'),
           stat('Fat', grams(avg('fat')), 'g', 'var(--c-fat)'),
         ),
-        el('div.cap', { style: { marginTop: 'var(--s-4)' } },
-          `Protein goal met on ${nutrition.daysHittingGoal(week, 'protein')} of ${logged.length} logged days · target ${goals.protein} g`),
+        logged.length
+          ? el('div.cap', { style: { marginTop: 'var(--s-4)' } },
+              `Protein goal met on ${nutrition.daysHittingGoal(logged, 'protein')} of ${logged.length} logged days · target ${goals.protein} g`)
+          : el('div.cap', { style: { marginTop: 'var(--s-4)' } }, 'No food logged in this date range.'),
       );
+    }
+
+    function applyRange(start, end, status) {
+      const validDate = (key) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
+        return dayKey(fromKey(key)) === key && key <= dayKey();
+      };
+      if (!validDate(start) || !validDate(end)) {
+        status.setAttribute('role', 'alert');
+        status.textContent = 'Choose valid dates up to today.';
+        return;
+      }
+      if (start > end) {
+        status.setAttribute('role', 'alert');
+        status.textContent = 'The start date must be on or before the end date.';
+        return;
+      }
+      selectedRange = { from: start, to: end };
+      rerender();
     }
 
     /* -------------------------------------------------------------- day row --- */
